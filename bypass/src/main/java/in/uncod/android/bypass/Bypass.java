@@ -18,394 +18,416 @@ import android.text.style.URLSpan;
 import android.util.DisplayMetrics;
 import android.util.Patterns;
 import android.util.TypedValue;
-import in.uncod.android.bypass.Element.Type;
-import in.uncod.android.bypass.style.HorizontalLineSpan;
 
 import java.util.Map;
 import java.util.concurrent.ConcurrentHashMap;
 
+import in.uncod.android.bypass.Element.Type;
+import in.uncod.android.bypass.style.CustomFontSpan;
+import in.uncod.android.bypass.style.HorizontalLineSpan;
+
 public class Bypass {
-	static {
-		System.loadLibrary("bypass");
-	}
 
-	private final Options mOptions;
+    /**
+     * Configurable options for how Bypass renders certain elements.
+     */
+    public static final class Options {
 
-	private final int mListItemIndent;
-	private final int mBlockQuoteIndent;
-	private final int mCodeBlockIndent;
-	private final int mHruleSize;
+        private float[] mHeaderSizes;
 
-	private final int mHruleTopBottomPadding;
+        private String mUnorderedListItem;
+        private int mListItemIndentUnit;
+        private float mListItemIndentSize;
 
-	// Keeps track of the ordered list number for each LIST element.
-	// We need to track multiple ordered lists at once because of nesting.
-	private final Map<Element, Integer> mOrderedListNumber = new ConcurrentHashMap<Element, Integer>();
+        private int mBlockQuoteColor;
+        private int mBlockQuoteIndentUnit;
+        private float mBlockQuoteIndentSize;
 
-	/**
-	 * @deprecated Use {@link #Bypass(Context)} instead.
-	 */
-	@Deprecated
-	public Bypass() {
-		// Default constructor for backwards-compatibility
-		mOptions = new Options();
-		mListItemIndent = 20;
-		mBlockQuoteIndent = 10;
-		mCodeBlockIndent = 10;
-		mHruleSize = 2;
-		mHruleTopBottomPadding = 20;
-	}
+        private int mCodeBlockIndentUnit;
+        private float mCodeBlockIndentSize;
 
-	public Bypass(Context context) {
-		this(context, new Options());
-	}
+        private int mHruleColor;
+        private int mHruleUnit;
+        private float mHruleSize;
 
-	public Bypass(Context context, Options options) {
-		mOptions = options;
+        public Options() {
+            mHeaderSizes = new float[]{
+                    1.5f, // h1
+                    1.4f, // h2
+                    1.3f, // h3
+                    1.2f, // h4
+                    1.1f, // h5
+                    1.0f, // h6
+            };
 
-		DisplayMetrics dm = context.getResources().getDisplayMetrics();
+            mUnorderedListItem = "\u2022";
+            mListItemIndentUnit = TypedValue.COMPLEX_UNIT_DIP;
+            mListItemIndentSize = 10;
 
-		mListItemIndent = (int) TypedValue.applyDimension(mOptions.mListItemIndentUnit,
-			mOptions.mListItemIndentSize, dm);
+            mBlockQuoteColor = 0xff0000ff;
+            mBlockQuoteIndentUnit = TypedValue.COMPLEX_UNIT_DIP;
+            mBlockQuoteIndentSize = 10;
 
-		mBlockQuoteIndent = (int) TypedValue.applyDimension(mOptions.mBlockQuoteIndentUnit,
-			mOptions.mBlockQuoteIndentSize, dm);
+            mCodeBlockIndentUnit = TypedValue.COMPLEX_UNIT_DIP;
+            mCodeBlockIndentSize = 10;
 
-		mCodeBlockIndent = (int) TypedValue.applyDimension(mOptions.mCodeBlockIndentUnit,
-			mOptions.mCodeBlockIndentSize, dm);
+            mHruleColor = Color.GRAY;
+            mHruleUnit = TypedValue.COMPLEX_UNIT_DIP;
+            mHruleSize = 1;
+        }
 
-		mHruleSize = (int) TypedValue.applyDimension(mOptions.mHruleUnit,
-			mOptions.mHruleSize, dm);
+        public Options setBlockQuoteColor(int color) {
+            mBlockQuoteColor = color;
+            return this;
+        }
 
-		mHruleTopBottomPadding = (int) dm.density * 10;
-	}
+        public Options setBlockQuoteIndentSize(int unit, float size) {
+            mBlockQuoteIndentUnit = unit;
+            mBlockQuoteIndentSize = size;
+            return this;
+        }
 
-	public CharSequence markdownToSpannable(String markdown) {
-		return markdownToSpannable(markdown, null);
-	}
+        public Options setCodeBlockIndentSize(int unit, float size) {
+            mCodeBlockIndentUnit = unit;
+            mCodeBlockIndentSize = size;
+            return this;
+        }
 
-	public CharSequence markdownToSpannable(String markdown, ImageGetter imageGetter) {
-		Document document = processMarkdown(markdown);
+        public Options setHeaderSizes(float[] headerSizes) {
+            if (headerSizes == null) {
+                throw new IllegalArgumentException("headerSizes must not be null");
+            } else if (headerSizes.length != 6) {
+                throw new IllegalArgumentException("headerSizes must have 6 elements (h1 through h6)");
+            }
 
-		int size = document.getElementCount();
-		CharSequence[] spans = new CharSequence[size];
+            mHeaderSizes = headerSizes;
 
-		for (int i = 0; i < size; i++) {
-			spans[i] = recurseElement(document.getElement(i), i, size, imageGetter);
-		}
+            return this;
+        }
 
-		return TextUtils.concat(spans);
-	}
+        public Options setHruleColor(int color) {
+            mHruleColor = color;
+            return this;
+        }
 
-	private native Document processMarkdown(String markdown);
+        public Options setHruleSize(int unit, float size) {
+            mHruleUnit = unit;
+            mHruleSize = size;
+            return this;
+        }
 
-	// The 'numberOfSiblings' parameters refers to the number of siblings within the parent, including
-	// the 'element' parameter, as in "How many siblings are you?" rather than "How many siblings do
-	// you have?".
-	private CharSequence recurseElement(Element element, int indexWithinParent, int numberOfSiblings,
-			ImageGetter imageGetter) {
+        public Options setListItemIndentSize(int unit, float size) {
+            mListItemIndentUnit = unit;
+            mListItemIndentSize = size;
+            return this;
+        }
 
-		Type type = element.getType();
+        public Options setUnorderedListItem(String unorderedListItem) {
+            mUnorderedListItem = unorderedListItem;
+            return this;
+        }
+    }
 
-		boolean isOrderedList = false;
-		if (type == Type.LIST) {
-			String flagsStr = element.getAttribute("flags");
-			if (flagsStr != null) {
-				int flags = Integer.parseInt(flagsStr);
-				isOrderedList = (flags & Element.F_LIST_ORDERED) != 0;
-				if (isOrderedList) {
-					mOrderedListNumber.put(element, 1);
-				}
-			}
-		}
+    /**
+     * Retrieves images for markdown images.
+     */
+    public static interface ImageGetter {
 
-		int size = element.size();
-		CharSequence[] spans = new CharSequence[size];
-		
-		for (int i = 0; i < size; i++) {
-			spans[i] = recurseElement(element.children[i], i, size, imageGetter);
-		}
+        /**
+         * This method is called when the parser encounters an image tag.
+         */
+        public Drawable getDrawable(String source);
 
-		// Clean up after we're done
-		if (isOrderedList) {
-			mOrderedListNumber.remove(this);
-		}
+    }
 
-		CharSequence concat = TextUtils.concat(spans);
+    static {
+        System.loadLibrary("bypass");
+    }
 
-		SpannableStringBuilder builder = new ReverseSpannableStringBuilder();
+    private final Options mOptions;
+    private final int mListItemIndent;
+    private final int mBlockQuoteIndent;
+    private final int mCodeBlockIndent;
+    private final int mHruleSize;
+    private final int mHruleTopBottomPadding;
+    // Keeps track of the ordered list number for each LIST element.
+    // We need to track multiple ordered lists at once because of nesting.
+    private final Map<Element, Integer> mOrderedListNumber = new ConcurrentHashMap<Element, Integer>();
+    private Typeface mBoldTypeface = null;
+    private Typeface mItalicTypeface = null;
+    private Typeface mBoldItalicTypeface = null;
 
-		String text = element.getText();
-		if (element.size() == 0
-			&& element.getParent() != null
-			&& element.getParent().getType() != Type.BLOCK_CODE) {
-			text = text.replace('\n', ' ');
-		}
+    /**
+     * @deprecated Use {@link #Bypass(Context)} instead.
+     */
+    @Deprecated
+    public Bypass() {
+        // Default constructor for backwards-compatibility
+        mOptions = new Options();
+        mListItemIndent = 20;
+        mBlockQuoteIndent = 10;
+        mCodeBlockIndent = 10;
+        mHruleSize = 2;
+        mHruleTopBottomPadding = 20;
+    }
 
-		// Retrieve the image now so we know whether we're going to have something to display later
-		// If we don't, then show the alt text instead (if available).
-		Drawable imageDrawable = null;
-		if (type == Type.IMAGE && imageGetter != null && !TextUtils.isEmpty(element.getAttribute("link"))) {
-			imageDrawable = imageGetter.getDrawable(element.getAttribute("link"));
-		}
+    public Bypass(Context context) {
+        this(context, new Options());
+    }
 
-		switch (type) {
-			case LIST:
-				if (element.getParent() != null
-					&& element.getParent().getType() == Type.LIST_ITEM) {
-					builder.append("\n");
-				}
-				break;
-			case LINEBREAK:
-				builder.append("\n");
-				break;
-			case LIST_ITEM:
-				builder.append(" ");
-				if (mOrderedListNumber.containsKey(element.getParent())) {
-					int number = mOrderedListNumber.get(element.getParent());
-					builder.append(Integer.toString(number) + ".");
-					mOrderedListNumber.put(element.getParent(), number + 1);
-				}
-				else {
-					builder.append(mOptions.mUnorderedListItem);
-				}
-				builder.append("  ");
-				break;
-			case AUTOLINK:
-				builder.append(element.getAttribute("link"));
-				break;
-			case HRULE:
-				// This ultimately gets drawn over by the line span, but
-				// we need something here or the span isn't even drawn.
-				builder.append("-");
-				break;
-			case IMAGE:
-				// Display alt text (or title text) if there is no image
-				if (imageDrawable == null) {
-					String show = element.getAttribute("alt");
-					if (TextUtils.isEmpty(show)) {
-						show = element.getAttribute("title");
-					}
-					if (!TextUtils.isEmpty(show)) {
-						show = "[" + show + "]";
-						builder.append(show);
-					}
-				}
-				else {
-					// Character to be replaced
-					builder.append("\uFFFC");
-				}
-				break;
-		}
+    public Bypass(Context context, Options options) {
+        mOptions = options;
 
-		builder.append(text);
-		builder.append(concat);
-		
-		// Don't auto-append whitespace after last item in document. The 'numberOfSiblings'
-		// is the number of children the parent of the current element has (including the
-		// element itself), hence subtracting a number from that count gives us the index
-		// of the last child within the parent.
-		if (element.getParent() != null || indexWithinParent < (numberOfSiblings - 1)) {
-			if (type == Type.LIST_ITEM) {
-				if (element.size() == 0 || !element.children[element.size() - 1].isBlockElement()) {
-					builder.append("\n");
-				}
-			}
-			else if (element.isBlockElement() && type != Type.BLOCK_QUOTE) {
-				if (type == Type.LIST) {
-					// If this is a nested list, don't include newlines
-					if (element.getParent() == null || element.getParent().getType() != Type.LIST_ITEM) {
-						builder.append("\n");
-					}
-				}
-				else if (element.getParent() != null
-					&& element.getParent().getType() == Type.LIST_ITEM) {
-					// List items should never double-space their entries
-					builder.append("\n");
-				}
-				else {
-					builder.append("\n\n");
-				}
-			}
-		}
+        DisplayMetrics dm = context.getResources().getDisplayMetrics();
 
-		switch (type) {
-			case HEADER:
-				String levelStr = element.getAttribute("level");
-				int level = Integer.parseInt(levelStr);
-				setSpan(builder, new RelativeSizeSpan(mOptions.mHeaderSizes[level - 1]));
-				setSpan(builder, new StyleSpan(Typeface.BOLD));
-				break;
-			case LIST:
-				setBlockSpan(builder, new LeadingMarginSpan.Standard(mListItemIndent));
-				break;
-			case EMPHASIS:
-				setSpan(builder, new StyleSpan(Typeface.ITALIC));
-				break;
-			case DOUBLE_EMPHASIS:
-				setSpan(builder, new StyleSpan(Typeface.BOLD));
-				break;
-			case TRIPLE_EMPHASIS:
-				setSpan(builder, new StyleSpan(Typeface.BOLD_ITALIC));
-				break;
-			case BLOCK_CODE:
-				setSpan(builder, new LeadingMarginSpan.Standard(mCodeBlockIndent));
-				setSpan(builder, new TypefaceSpan("monospace"));
-				break;
-			case CODE_SPAN:
-				setSpan(builder, new TypefaceSpan("monospace"));
-				break;
-			case LINK:
-			case AUTOLINK:
-				String link = element.getAttribute("link");
-				if (!TextUtils.isEmpty(link) && Patterns.EMAIL_ADDRESS.matcher(link).matches()) {
-					link = "mailto:" + link;
-				}
-				setSpan(builder, new URLSpan(link));
-				break;
-			case BLOCK_QUOTE:
-				// We add two leading margin spans so that when the order is reversed,
-				// the QuoteSpan will always be in the same spot.
-				setBlockSpan(builder, new LeadingMarginSpan.Standard(mBlockQuoteIndent));
-				setBlockSpan(builder, new QuoteSpan(mOptions.mBlockQuoteColor));
-				setBlockSpan(builder, new LeadingMarginSpan.Standard(mBlockQuoteIndent));
-				setBlockSpan(builder, new StyleSpan(Typeface.ITALIC));
-				break;
-			case STRIKETHROUGH:
-				setSpan(builder, new StrikethroughSpan());
-				break;
-			case HRULE:
-				setSpan(builder, new HorizontalLineSpan(mOptions.mHruleColor, mHruleSize, mHruleTopBottomPadding));
-				break;
-			case IMAGE:
-				if (imageDrawable != null) {
-					setSpan(builder, new ImageSpan(imageDrawable));
-				}
-				break;
-		}
+        mListItemIndent = (int) TypedValue.applyDimension(mOptions.mListItemIndentUnit,
+                mOptions.mListItemIndentSize, dm);
 
-		return builder;
-	}
+        mBlockQuoteIndent = (int) TypedValue.applyDimension(mOptions.mBlockQuoteIndentUnit,
+                mOptions.mBlockQuoteIndentSize, dm);
 
-	private static void setSpan(SpannableStringBuilder builder, Object what) {
-		builder.setSpan(what, 0, builder.length(), Spannable.SPAN_EXCLUSIVE_EXCLUSIVE);
-	}
+        mCodeBlockIndent = (int) TypedValue.applyDimension(mOptions.mCodeBlockIndentUnit,
+                mOptions.mCodeBlockIndentSize, dm);
 
-	// These have trailing newlines that we want to avoid spanning
-	private static void setBlockSpan(SpannableStringBuilder builder, Object what) {
-		int length = Math.max(0, builder.length() - 1);
-		builder.setSpan(what, 0, length, Spannable.SPAN_EXCLUSIVE_EXCLUSIVE);
-	}
+        mHruleSize = (int) TypedValue.applyDimension(mOptions.mHruleUnit,
+                mOptions.mHruleSize, dm);
 
-	/**
-	 * Configurable options for how Bypass renders certain elements.
-	 */
-	public static final class Options {
-		private float[] mHeaderSizes;
+        mHruleTopBottomPadding = (int) dm.density * 10;
+    }
 
-		private String mUnorderedListItem;
-		private int mListItemIndentUnit;
-		private float mListItemIndentSize;
+    // These have trailing newlines that we want to avoid spanning
+    private static void setBlockSpan(SpannableStringBuilder builder, Object what) {
+        int length = Math.max(0, builder.length() - 1);
+        builder.setSpan(what, 0, length, Spannable.SPAN_EXCLUSIVE_EXCLUSIVE);
+    }
 
-		private int mBlockQuoteColor;
-		private int mBlockQuoteIndentUnit;
-		private float mBlockQuoteIndentSize;
+    private static void setSpan(SpannableStringBuilder builder, Object what) {
+        builder.setSpan(what, 0, builder.length(), Spannable.SPAN_EXCLUSIVE_EXCLUSIVE);
+    }
 
-		private int mCodeBlockIndentUnit;
-		private float mCodeBlockIndentSize;
+    public CharSequence markdownToSpannable(String markdown) {
+        return markdownToSpannable(markdown, null);
+    }
 
-		private int mHruleColor;
-		private int mHruleUnit;
-		private float mHruleSize;
+    public CharSequence markdownToSpannable(String markdown, ImageGetter imageGetter) {
+        Document document = processMarkdown(markdown);
 
-		public Options() {
-			mHeaderSizes = new float[] {
-				1.5f, // h1
-				1.4f, // h2
-				1.3f, // h3
-				1.2f, // h4
-				1.1f, // h5
-				1.0f, // h6
-			};
+        int size = document.getElementCount();
+        CharSequence[] spans = new CharSequence[size];
 
-			mUnorderedListItem = "\u2022";
-			mListItemIndentUnit = TypedValue.COMPLEX_UNIT_DIP;
-			mListItemIndentSize = 10;
+        for (int i = 0; i < size; i++) {
+            spans[i] = recurseElement(document.getElement(i), i, size, imageGetter);
+        }
 
-			mBlockQuoteColor = 0xff0000ff;
-			mBlockQuoteIndentUnit = TypedValue.COMPLEX_UNIT_DIP;
-			mBlockQuoteIndentSize = 10;
+        return TextUtils.concat(spans);
+    }
 
-			mCodeBlockIndentUnit = TypedValue.COMPLEX_UNIT_DIP;
-			mCodeBlockIndentSize = 10;
+    public void setBoldItalicTypeface(Typeface boldItalicTypeface) {
+        this.mBoldItalicTypeface = boldItalicTypeface;
+    }
 
-			mHruleColor = Color.GRAY;
-			mHruleUnit = TypedValue.COMPLEX_UNIT_DIP;
-			mHruleSize = 1;
-		}
+    public void setBoldTypeface(Typeface boldTypeface) {
+        this.mBoldTypeface = boldTypeface;
+    }
 
-		public Options setHeaderSizes(float[] headerSizes) {
-			if (headerSizes == null) {
-				throw new IllegalArgumentException("headerSizes must not be null");
-			}
-			else if (headerSizes.length != 6) {
-				throw new IllegalArgumentException("headerSizes must have 6 elements (h1 through h6)");
-			}
+    public void setItalicTypeface(Typeface italicTypeface) {
+        this.mItalicTypeface = italicTypeface;
+    }
 
-			mHeaderSizes = headerSizes;
+    private native Document processMarkdown(String markdown);
 
-			return this;
-		}
+    // The 'numberOfSiblings' parameters refers to the number of siblings within the parent, including
+    // the 'element' parameter, as in "How many siblings are you?" rather than "How many siblings do
+    // you have?".
+    private CharSequence recurseElement(Element element, int indexWithinParent, int numberOfSiblings,
+                                        ImageGetter imageGetter) {
 
-		public Options setUnorderedListItem(String unorderedListItem) {
-			mUnorderedListItem = unorderedListItem;
-			return this;
-		}
+        Type type = element.getType();
 
-		public Options setListItemIndentSize(int unit, float size) {
-			mListItemIndentUnit = unit;
-			mListItemIndentSize = size;
-			return this;
-		}
+        boolean isOrderedList = false;
+        if (type == Type.LIST) {
+            String flagsStr = element.getAttribute("flags");
+            if (flagsStr != null) {
+                int flags = Integer.parseInt(flagsStr);
+                isOrderedList = (flags & Element.F_LIST_ORDERED) != 0;
+                if (isOrderedList) {
+                    mOrderedListNumber.put(element, 1);
+                }
+            }
+        }
 
-		public Options setBlockQuoteColor(int color) {
-			mBlockQuoteColor = color;
-			return this;
-		}
+        int size = element.size();
+        CharSequence[] spans = new CharSequence[size];
 
-		public Options setBlockQuoteIndentSize(int unit, float size) {
-			mBlockQuoteIndentUnit = unit;
-			mBlockQuoteIndentSize = size;
-			return this;
-		}
+        for (int i = 0; i < size; i++) {
+            spans[i] = recurseElement(element.children[i], i, size, imageGetter);
+        }
 
-		public Options setCodeBlockIndentSize(int unit, float size) {
-			mCodeBlockIndentUnit = unit;
-			mCodeBlockIndentSize = size;
-			return this;
-		}
+        // Clean up after we're done
+        if (isOrderedList) {
+            mOrderedListNumber.remove(this);
+        }
 
-		public Options setHruleColor(int color) {
-			mHruleColor = color;
-			return this;
-		}
+        CharSequence concat = TextUtils.concat(spans);
 
-		public Options setHruleSize(int unit, float size) {
-			mHruleUnit = unit;
-			mHruleSize = size;
-			return this;
-		}
-	}
+        SpannableStringBuilder builder = new ReverseSpannableStringBuilder();
 
-	/**
-	 * Retrieves images for markdown images.
-	 */
-	public static interface ImageGetter {
+        String text = element.getText();
+        if (element.size() == 0
+                && element.getParent() != null
+                && element.getParent().getType() != Type.BLOCK_CODE) {
+            text = text.replace('\n', ' ');
+        }
 
-		/**
-		 * This method is called when the parser encounters an image tag.
-		 */
-		public Drawable getDrawable(String source);
+        // Retrieve the image now so we know whether we're going to have something to display later
+        // If we don't, then show the alt text instead (if available).
+        Drawable imageDrawable = null;
+        if (type == Type.IMAGE && imageGetter != null && !TextUtils.isEmpty(element.getAttribute("link"))) {
+            imageDrawable = imageGetter.getDrawable(element.getAttribute("link"));
+        }
 
-	}
+        switch (type) {
+            case LIST:
+                if (element.getParent() != null
+                        && element.getParent().getType() == Type.LIST_ITEM) {
+                    builder.append("\n");
+                }
+                break;
+            case LINEBREAK:
+                builder.append("\n");
+                break;
+            case LIST_ITEM:
+                builder.append(" ");
+                if (mOrderedListNumber.containsKey(element.getParent())) {
+                    int number = mOrderedListNumber.get(element.getParent());
+                    builder.append(Integer.toString(number) + ".");
+                    mOrderedListNumber.put(element.getParent(), number + 1);
+                } else {
+                    builder.append(mOptions.mUnorderedListItem);
+                }
+                builder.append("  ");
+                break;
+            case AUTOLINK:
+                builder.append(element.getAttribute("link"));
+                break;
+            case HRULE:
+                // This ultimately gets drawn over by the line span, but
+                // we need something here or the span isn't even drawn.
+                builder.append("-");
+                break;
+            case IMAGE:
+                // Display alt text (or title text) if there is no image
+                if (imageDrawable == null) {
+                    String show = element.getAttribute("alt");
+                    if (TextUtils.isEmpty(show)) {
+                        show = element.getAttribute("title");
+                    }
+                    if (!TextUtils.isEmpty(show)) {
+                        show = "[" + show + "]";
+                        builder.append(show);
+                    }
+                } else {
+                    // Character to be replaced
+                    builder.append("\uFFFC");
+                }
+                break;
+        }
+
+        builder.append(text);
+        builder.append(concat);
+
+        // Don't auto-append whitespace after last item in document. The 'numberOfSiblings'
+        // is the number of children the parent of the current element has (including the
+        // element itself), hence subtracting a number from that count gives us the index
+        // of the last child within the parent.
+        if (element.getParent() != null || indexWithinParent < (numberOfSiblings - 1)) {
+            if (type == Type.LIST_ITEM) {
+                if (element.size() == 0 || !element.children[element.size() - 1].isBlockElement()) {
+                    builder.append("\n");
+                }
+            } else if (element.isBlockElement() && type != Type.BLOCK_QUOTE) {
+                if (type == Type.LIST) {
+                    // If this is a nested list, don't include newlines
+                    if (element.getParent() == null || element.getParent().getType() != Type.LIST_ITEM) {
+                        builder.append("\n");
+                    }
+                } else if (element.getParent() != null
+                        && element.getParent().getType() == Type.LIST_ITEM) {
+                    // List items should never double-space their entries
+                    builder.append("\n");
+                } else {
+                    builder.append("\n\n");
+                }
+            }
+        }
+
+        switch (type) {
+            case HEADER:
+                String levelStr = element.getAttribute("level");
+                int level = Integer.parseInt(levelStr);
+                setSpan(builder, new RelativeSizeSpan(mOptions.mHeaderSizes[level - 1]));
+                setSpan(builder, new StyleSpan(Typeface.BOLD));
+                break;
+            case LIST:
+                setBlockSpan(builder, new LeadingMarginSpan.Standard(mListItemIndent));
+                break;
+            case EMPHASIS:
+                if (mItalicTypeface != null) {
+                    setSpan(builder, new CustomFontSpan(mItalicTypeface));
+                } else {
+                    setSpan(builder, new StyleSpan(Typeface.ITALIC));
+                }
+                break;
+            case DOUBLE_EMPHASIS:
+                if (mBoldTypeface != null) {
+                    setSpan(builder, new CustomFontSpan(mBoldTypeface));
+                } else {
+                    setSpan(builder, new StyleSpan(Typeface.BOLD));
+                }
+                break;
+            case TRIPLE_EMPHASIS:
+                if (mBoldItalicTypeface != null) {
+                    setSpan(builder, new CustomFontSpan(mBoldItalicTypeface));
+                } else {
+                    setSpan(builder, new StyleSpan(Typeface.BOLD_ITALIC));
+                }
+                break;
+            case BLOCK_CODE:
+                setSpan(builder, new LeadingMarginSpan.Standard(mCodeBlockIndent));
+                setSpan(builder, new TypefaceSpan("monospace"));
+                break;
+            case CODE_SPAN:
+                setSpan(builder, new TypefaceSpan("monospace"));
+                break;
+            case LINK:
+            case AUTOLINK:
+                String link = element.getAttribute("link");
+                if (!TextUtils.isEmpty(link) && Patterns.EMAIL_ADDRESS.matcher(link).matches()) {
+                    link = "mailto:" + link;
+                }
+                setSpan(builder, new URLSpan(link));
+                break;
+            case BLOCK_QUOTE:
+                // We add two leading margin spans so that when the order is reversed,
+                // the QuoteSpan will always be in the same spot.
+                setBlockSpan(builder, new LeadingMarginSpan.Standard(mBlockQuoteIndent));
+                setBlockSpan(builder, new QuoteSpan(mOptions.mBlockQuoteColor));
+                setBlockSpan(builder, new LeadingMarginSpan.Standard(mBlockQuoteIndent));
+                setBlockSpan(builder, new StyleSpan(Typeface.ITALIC));
+                break;
+            case STRIKETHROUGH:
+                setSpan(builder, new StrikethroughSpan());
+                break;
+            case HRULE:
+                setSpan(builder, new HorizontalLineSpan(mOptions.mHruleColor, mHruleSize, mHruleTopBottomPadding));
+                break;
+            case IMAGE:
+                if (imageDrawable != null) {
+                    setSpan(builder, new ImageSpan(imageDrawable));
+                }
+                break;
+        }
+
+        return builder;
+    }
 }
