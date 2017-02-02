@@ -20,7 +20,7 @@ allprojects {
 
 ```gradle
 dependencies {
-    compile 'com.github.Commit451:bypasses:1.0.4'
+    compile 'com.github.mzgreen:bypasses:1.0.5'
 }
 ```
 
