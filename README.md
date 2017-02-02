@@ -1,3 +1,12 @@
+A fork of bypass library that allows to use different font for bold, italic and italicbold formatted texts. It uses a custom font span under the hood.
+
+3 new methods were added:
+```java
+Bypass.setsetBoldTypeface(Typeface)
+Bypass.setItalicTypeface(Typeface)
+Bypass.setBoldItalicTypeface(Typeface)
+```
+
 # Gradle Dependency
 
 ```gradle
